@@ -1,0 +1,903 @@
+---
+title: Hearing words changes color perception- Facilitation of color discrimination by verbal vs. visual cues
+date: "`r Sys.Date()`"
+author: "LF"
+output: 
+  html_document:
+    toc: true
+    number_sections: false 
+    theme: cerulean
+    toc_float: true
+    code_folding: show 
+---
+
+```{r}
+rm(list=ls())
+library(dplyr, warn.conflicts = FALSE)
+library(tidyr, warn.conflicts = FALSE)
+library(Matrix, warn.conflicts = FALSE)
+library(lme4, warn.conflicts = FALSE)
+library(lmerTest, warn.conflicts = FALSE)
+library(knitr)
+library(rmarkdown)
+library(broom)
+source("/Users/lewisforder/Dropbox/SharedFolders/LupyanExps/Psychopy\ Files/helpers.R")
+opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = NA,
+               error = FALSE, tidy = FALSE,  cache = FALSE, fig.height = 4, fig.width = 4)
+```
+
+# Experiment 1: Informative verbal cues
+## Descriptives
+```{r}
+dataUnblocked <- read.table("/Users/lewisforder/Dropbox/Research/LupyanLab/ResearchProjects/LCD-BEH-colorLangDiscrim/WriteUp/Files_for_OSF/Exp1_informative_verbal_cues.txt", sep="\t", header = TRUE)
+
+names(dataUnblocked)[names(dataUnblocked) == 'stim_pair_0focal1trans2bound'] <- 'trial_type' # 0=focal, 1=transition, 2=boundary 
+names(dataUnblocked)[names(dataUnblocked) == 'cue1_vs_noise0'] <- 'cue' # 0=focal, 1=transition, 2=boundary 
+dataUnblocked$isExp1 <- as.numeric(1)
+
+#toss low-performing subjects
+dataUnblocked_agg = dataUnblocked %>% group_by(subjCode) %>% summarize(accuracy=mean(accuracy),RT=median(RT),numTrials=n()) %>% transform(normedAcc=scale(accuracy))
+lowAccSubjs_unblocked = dataUnblocked_agg %>% filter(accuracy<.50)
+dataUnblocked = dataUnblocked %>% filter(!subjCode %in% lowAccSubjs_unblocked$subjCode) #remove these subjects
+
+#fix up the latency column
+dataUnblocked = dataUnblocked %>% transform(latency = RT*accuracy*1000) %>% transform(latency=ifelse((accuracy=0 | latency<200 | latency>4000),NA,latency))
+
+#split condition code into more informative columns. This is extra work due to inconvenient condition coding...
+dataUnblocked = dataUnblocked %>% separate(condition_Code,c("condition_num2", "conditionSuffix"), sep='\\.') %>% separate(conditionSuffix,c("color", "boundary"),sep="2")
+dataUnblocked$color = as.factor(dataUnblocked$color)
+dataUnblocked$boundary = as.factor(dataUnblocked$boundary)
+
+#create column to denote basic boundaries (Red-Orange / Yellow-Orange / Red-Blue / Blue-Purple)
+# vs. non-basic boundaries (Yellow-Lime / Green-Lime / Green-Teal / Blue-Teal)
+dataUnblocked$isBasic <- ifelse(dataUnblocked$boundary %in% c("RYboundary", "BRboundary"), 1, 0)
+
+#center variables
+dataUnblocked$is_cue_c = myCenter(dataUnblocked$cue)
+dataUnblocked$trial_type_c = myCenter(dataUnblocked$trial_type)
+dataUnblocked$color_c = myCenter(dataUnblocked$color)
+dataUnblocked$isBasic_c = myCenter(dataUnblocked$isBasic)
+```
+
+#### Cue vs. no cue
+```{r}
+dataUnblocked %>% group_by(cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+#### Trial type
+```{r}
+dataUnblocked %>% group_by(trial_type) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+#### Cue vs. no cue x trial-type
+```{r}
+dataUnblocked %>% group_by(trial_type,cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+
+accuracy_for_graphing_agg = summarySEwithin(data=dataUnblocked,measurevar="accuracy",withinvars=c("trial_type","cue"),idvar="subjCode")
+ggplot(data=accuracy_for_graphing_agg, aes(y=accuracy,group=cue,x=trial_type,color=cue))+  geom_line()+
+  geom_point(size=1)+
+  geom_errorbar(aes(ymax=accuracy+se,ymin=accuracy-se),width=0.10)+
+  theme_bw()+
+  theme(panel.grid.minor=element_blank(), panel.grid.major=element_blank(), panel.background=element_blank(), panel.border=element_blank())+
+  theme(axis.text.x=element_text(size=10), 
+        axis.text.y=element_text(size=10), 
+        axis.title.x=element_text(size=10), 
+        axis.title.y=element_text(size=10))+
+  theme(axis.title.y=element_text(vjust=0.9,size=10))+
+  theme(axis.title.x=element_text(vjust=0.9,size=10))+
+  theme(axis.title.y=element_text(vjust=1.5))+
+  theme(axis.title.x=element_text(vjust=0))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.line = element_line(color="black", size = 0.5))+
+  theme(legend.position="none")+
+  scale_x_discrete(labels=c("0" = "Prototype", "1" = "Transitional",
+                            "2" = "Boundary"))+
+  scale_colour_manual(values = c("firebrick2", "dodgerblue4"))+
+  coord_cartesian(ylim = c(0.5, 1))+
+  annotate("text", x = 2.5, y = 0.94, label = "verbal color cue", color = "gray50")+
+  annotate("text", x = 2.5, y = 0.75, label = "no cue", color = "gray50")+
+  ylab("Accuracy")+
+  theme(axis.text = element_text(colour = "black"))
+```
+
+#### Color
+```{r}
+dataUnblocked %>% group_by(color) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+#### Cue vs. no cue x trial type x color
+```{r}
+dataUnblocked %>% group_by(color,trial_type,cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+## Accuracy analysis
+### Model building 1
+```{r}
+a=glmer(accuracy~1+(1|subjCode),data=dataUnblocked,family=binomial)
+b=glmer(accuracy~is_cue_c+(is_cue_c|subjCode),data=dataUnblocked,family=binomial)
+c=glmer(accuracy~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataUnblocked,family=binomial)
+d=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataUnblocked,family=binomial)
+e=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataUnblocked,family=binomial)
+anova(a,b,c,d,e) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(e)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+e %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the cue x trial-type interaction
+##### Prototypes
+```{r}
+dataUnblocked %>% filter(trial_type ==0) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataUnblocked %>% filter(trial_type ==0) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+##### Transitionals
+```{r}
+dataUnblocked %>% filter(trial_type ==1) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataUnblocked %>% filter(trial_type ==1) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+##### Boundaries:
+```{r}
+dataUnblocked %>% filter(trial_type ==2) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataUnblocked %>% filter(trial_type ==2) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of trial-type on label trials
+```{r}
+# The effect of comparisonType (i.e., trial-type) on LABEL trials:
+data_labels <- filter(dataUnblocked, cue ==1)
+A = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels,family=binomial)
+tidy(A)
+A %>% confint(method="Wald") %>% kable()
+```
+
+##### Prototypes vs. transitionals (label trials)
+```{r}
+data_labels_protoVsTrans <- subset(dataUnblocked, cue ==1 & trial_type < 2)
+B = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels_protoVsTrans,family=binomial)
+tidy(B)
+B %>% confint(method="Wald") %>% kable()
+```
+
+##### Prototypes vs. boundaries (label trials)
+```{r}
+data_labels_protoVsBound <- filter(dataUnblocked, cue ==1)
+data_labels_protoVsBound <- filter(data_labels_protoVsBound,trial_type == 0 | trial_type == 2)
+C = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels_protoVsBound,family=binomial)
+tidy(C)
+C %>% confint(method="Wald") %>% kable()
+```
+
+##### Transitionals vs. boundaries (label trials)
+```{r}
+data_labels_TransVsBound <- filter(dataUnblocked, cue ==1)
+data_labels_TransVsBound <- filter(data_labels_TransVsBound,trial_type > 0)
+D = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels_TransVsBound,family=binomial)
+tidy(D)
+D %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of trial-type on noise trials
+```{r}
+# The effect of comparisonType(i.e., trial-type) on NOISE trials:
+data_labels <- filter(dataUnblocked, cue ==0)
+E = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels,family=binomial)
+tidy(E)
+E %>% confint(method="Wald") %>% kable()
+```
+
+##### Prototypes vs. transitionals (noise trials)
+```{r}
+data_labels_protoVsTrans <- subset(dataUnblocked, cue ==0 & trial_type < 2)
+G = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels_protoVsTrans,family=binomial)
+tidy(G)
+G %>% confint(method="Wald") %>% kable()
+```
+
+##### Prototypes vs. boundaries (noise trials)
+```{r}
+data_labels_protoVsBound <- filter(dataUnblocked, cue ==0)
+data_labels_protoVsBound <- filter(data_labels_protoVsBound,trial_type == 0 | trial_type == 2)
+H = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels_protoVsBound,family=binomial)
+tidy(H)
+H %>% confint(method="Wald") %>% kable()
+```
+
+##### Transitionals vs. boundaries (noise trials)
+```{r}
+data_labels_TransVsBound <- filter(dataUnblocked, cue ==0)
+data_labels_TransVsBound <- filter(data_labels_TransVsBound,trial_type > 0)
+I = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels_TransVsBound,family=binomial)
+tidy(I)
+I %>% confint(method="Wald") %>% kable()
+```
+
+### Model building 2 - Additional fixed effects
+##### Color category as a fixed instead of random effect
+```{r}
+f=glmer(accuracy~is_cue_c*trial_type_c+color_c+(is_cue_c|subjCode),data=dataUnblocked,family=binomial)
+g=glmer(accuracy~is_cue_c*trial_type_c+trial_type_c:color_c+(is_cue_c|subjCode),data=dataUnblocked,family=binomial)
+anova(a,b,c,d,e,f,g) %>% kable()
+# (Moving color category from a random to a fixed effect reduces model accuracy)
+```
+
+##### Looking at each color category individually
+```{r}
+red_data    <- filter(dataUnblocked, condition_Num == 0 | condition_Num == 7)
+yellow_data <- filter(dataUnblocked, condition_Num == 1 | condition_Num == 2)
+green_data  <- filter(dataUnblocked, condition_Num == 3 | condition_Num == 4)
+blue_data   <- filter(dataUnblocked, condition_Num == 5 | condition_Num == 6)
+```
+
+###### Red
+```{r}
+e_red=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=red_data,family=binomial)
+tidy(e_red)
+e_red %>% confint(method="Wald") %>% kable()
+```
+
+###### Yellow
+```{r}
+e_yellow=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=yellow_data,family=binomial)
+tidy(e_yellow)
+e_yellow %>% confint(method="Wald") %>% kable()
+```
+
+###### Green
+```{r}
+e_green=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=green_data,family=binomial)
+tidy(e_green)
+e_green %>% confint(method="Wald") %>% kable()
+```
+
+###### Blue
+```{r}
+e_blue=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=blue_data,family=binomial)
+tidy(e_blue)
+e_blue %>% confint(method="Wald") %>% kable()
+```
+
+##### Adding color category basicness to the model
+```{r}
+h=glmer(accuracy~is_cue_c*trial_type_c+isBasic_c+(is_cue_c|subjCode)+(1|color_c),data=dataUnblocked,family=binomial)
+i=glmer(accuracy~is_cue_c*trial_type_c*isBasic_c+(is_cue_c|subjCode)+(1|color_c),data=dataUnblocked,family=binomial)
+anova(a,b,c,d,e,h,i) %>% kable()
+tidy(i)
+i %>% confint(method="Wald") %>% kable()
+```
+
+## Reaction time analysis
+#### Model building
+```{r}
+La=lmer(latency~1+(1|subjCode),data=dataUnblocked,REML=FALSE)
+Lb=lmer(latency~is_cue_c+(is_cue_c|subjCode),data=dataUnblocked,REML=FALSE)
+Lc=lmer(latency~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataUnblocked,REML=FALSE)
+Ld=lmer(latency~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataUnblocked,REML=FALSE)
+Le=lmer(latency~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataUnblocked,REML=FALSE)
+anova(La,Lb,Lc,Ld,Le) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(Le)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+Le %>% confint(method="Wald") %>% kable()
+```
+
+
+# Experiment 2: Redundant verbal cues
+## Descriptives
+```{r}
+dataBlocked <- read.table("/Users/lewisforder/Dropbox/Research/LupyanLab/ResearchProjects/LCD-BEH-colorLangDiscrim/WriteUp/Files_for_OSF/Exp2_redundant_verbal_cues.txt", sep="\t", header = TRUE)
+names(dataBlocked)[names(dataBlocked) == 'stim_pair_0focal1trans2bound'] <- 'trial_type' # 0=focal, 1=tranistion, 2=boundary
+names(dataBlocked)[names(dataBlocked) == 'cue1_vs_noise0'] <- 'cue' # 0=focal, 1=transition, 2=boundary 
+
+#toss low-performing subjects
+dataBlocked_agg = dataBlocked %>% group_by(subjCode) %>% summarize(accuracy=mean(accuracy),RT=median(RT),numTrials=n()) %>% transform(normedAcc=scale(accuracy))
+lowAccSubjs_blocked = dataBlocked_agg %>% filter(accuracy < 0.5)
+dataBlocked = dataBlocked %>% filter(!subjCode %in% lowAccSubjs_blocked$subjCode) #remove these subjects
+
+#fix up the latency column
+dataBlocked = dataBlocked %>% transform(latency = RT*accuracy*1000) %>% transform(latency=ifelse((accuracy=0 | latency<200 | latency>4000),NA,latency))
+
+#split condition code into more informative columns. This is extra work due to inconvenient condition coding...
+dataBlocked = dataBlocked %>% separate(condition_Code,c("condition_num2", "conditionSuffix"), sep='\\.') %>% separate(conditionSuffix,c("color", "boundary"),sep="2")
+dataBlocked$color = as.factor(dataBlocked$color)
+dataBlocked$boundary = as.factor(dataBlocked$boundary)
+
+#create column to denote basic boundaries (Red-Orange / Yellow-Orange / Red-Blue / Blue-Purple)
+# vs. non-basic boundaries (Yellow-Lime / Green-Lime / Green-Teal / Blue-Teal)
+dataBlocked$isBasic <- ifelse(dataBlocked$boundary %in% c("RYboundary", "BRboundary"), 1, 0)
+
+#center variables
+dataBlocked$is_cue_c = myCenter(dataBlocked$cue)
+dataBlocked$trial_type_c = myCenter(dataBlocked$trial_type)
+dataBlocked$color_c = myCenter(dataBlocked$color)
+```
+
+#### Cue vs. no cue
+```{r}
+dataBlocked %>% group_by(cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+#### Cue vs. no cue x trial-type
+```{r}
+dataBlocked %>% group_by(trial_type,cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+## Accuracy analysis
+### Model building
+```{r}
+a=glmer(accuracy~1+(1|subjCode),data=dataBlocked,family=binomial)
+b=glmer(accuracy~is_cue_c+(is_cue_c|subjCode),data=dataBlocked,family=binomial)
+c=glmer(accuracy~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataBlocked,family=binomial)
+d=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataBlocked,family=binomial)
+e=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataBlocked,family=binomial)
+anova(a,b,c,d,e) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(e)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+e %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of trial-type on noise trials
+##### Collapsed over combined transitionals & boundaries
+```{r}
+dataBlocked$isProto_c <- ifelse(dataBlocked$trial_type == 0,0.5,-0.5)
+dataBlocked %>% filter(isProto_c ==-0.5) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataBlocked %>% filter(isProto_c ==-0.5) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+##### Prototypes
+```{r}
+dataBlocked %>% filter(trial_type ==0) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataBlocked %>% filter(trial_type ==0) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of trial-type on label trials
+```{r}
+data_labels <- filter(dataBlocked, cue ==1)
+A = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels,family=binomial)
+tidy(A)
+A %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of trial-type on noise trials
+```{r}
+data_labels <- filter(dataBlocked, cue ==0)
+B = glmer(accuracy~trial_type_c+(1|subjCode)+(1|color_c),data=data_labels,family=binomial) 
+tidy(B)
+B %>% confint(method="Wald") %>% kable()
+```
+
+## Reaction time analysis
+#### Model building
+```{r}
+La=lmer(latency~1+(1|subjCode),data=dataBlocked,REML=FALSE)
+Lb=lmer(latency~is_cue_c+(is_cue_c|subjCode),data=dataBlocked,REML=FALSE)
+Lc=lmer(latency~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataBlocked,REML=FALSE)
+Ld=lmer(latency~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataBlocked,REML=FALSE)
+anova(La,Lb,Lc,Ld) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(Ld)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+Ld %>% confint(method="Wald") %>% kable()
+```
+
+
+# Experiment 3: Visual cues
+## Descriptives
+```{r}
+dataVisCueExact <- read.table("/Users/lewisforder/Dropbox/Research/LupyanLab/ResearchProjects/LCD-BEH-colorLangDiscrim/WriteUp/Files_for_OSF/Exp3_visual_cueing_exact_colors.txt", sep="\t", header = TRUE)
+names(dataVisCueExact)[names(dataVisCueExact) == 'stim_pair_0focal1trans2bound'] <- 'trial_type' # 0=focal, 1=tranistion, 2=boundary
+names(dataVisCueExact)[names(dataVisCueExact) == 'cue1_vs_noise0'] <- 'cue' # 0=focal, 1=transition, 2=boundary 
+
+#toss low-performing subjects (overall accuracy)
+dataVisCueExact_agg = dataVisCueExact %>% group_by(subjCode) %>% summarize(accuracy=mean(accuracy),RT=median(RT),numTrials=n()) %>% transform(normedAcc=scale(accuracy))
+lowAccSubjs_visCuev2 = dataVisCueExact_agg %>% filter(accuracy < 0.5)
+dataVisCueExact = dataVisCueExact %>% filter(!subjCode %in% lowAccSubjs_visCuev2$subjCode) #remove these subjects
+
+#fix up the latency column
+dataVisCueExact = dataVisCueExact %>% transform(latency = RT*accuracy*1000) %>% transform(latency=ifelse((accuracy=0 | latency<200 | latency>4000),NA,latency))
+
+#split condition code into more informative columns. This is extra work due to inconvenient condition coding...
+dataVisCueExact = dataVisCueExact %>% separate(condition_Code,c("condition_num2", "conditionSuffix"), sep='\\.') %>% separate(conditionSuffix,c("color", "boundary"),sep="2")
+dataVisCueExact$color = as.factor(dataVisCueExact$color)
+dataVisCueExact$boundary = as.factor(dataVisCueExact$boundary)
+
+#create column to denote basic boundaries (Red-Orange / Yellow-Orange / Red-Blue / Blue-Purple)
+# vs. non-basic boundaries (Yellow-Lime / Green-Lime / Green-Teal / Blue-Teal)
+dataVisCueExact$isBasic <- ifelse(dataVisCueExact$boundary %in% c("RYboundary", "BRboundary"), 1, 0)
+
+#center variables
+dataVisCueExact$is_cue_c = myCenter(dataVisCueExact$cue)
+dataVisCueExact$trial_type_c = myCenter(dataVisCueExact$trial_type)
+dataVisCueExact$color_c = myCenter(dataVisCueExact$color)
+dataVisCueExact$isBasic_c = myCenter(dataVisCueExact$isBasic)
+```
+
+#### Cue vs. no cue
+```{r}
+dataVisCueExact %>% group_by(cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+#### Cue vs. no cue x trial-type
+```{r}
+dataVisCueExact %>% group_by(trial_type,cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+## Accuracy analysis
+### Model building
+```{r}
+a=glmer(accuracy~1+(1|subjCode),data=dataVisCueExact,family=binomial)
+b=glmer(accuracy~is_cue_c+(is_cue_c|subjCode),data=dataVisCueExact,family=binomial)
+c=glmer(accuracy~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataVisCueExact,family=binomial)
+d=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataVisCueExact,family=binomial)
+e=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataVisCueExact,family=binomial)
+anova(a,b,c,d,e) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(e)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+e %>% confint(method="Wald") %>% kable()
+```
+
+### Omit subjects who did not complete all trials (n=4)
+#### Final model ouput statistics
+```{r}
+not384trials_visCuev2 = dataVisCueExact_agg %>% filter(numTrials < 384)
+not384trials = dataVisCueExact %>% filter(!subjCode %in% not384trials_visCuev2$subjCode) #remove these subjects
+e_test=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=not384trials,family=binomial)
+tidy(e_test)
+e_test %>% confint(method="Wald") %>% kable()
+```
+
+### Model building - Exact visual cues (Experiment 3) vs. informative verbal cues (Experiment 1)
+```{r}
+dataVisCueExact$isExp1 <- as.numeric(0)
+Exp1_and_Exp3_concat_data <- rbind(dataVisCueExact, dataUnblocked)
+Exp1_and_Exp3_concat_data$isExp1_c = myCenter(Exp1_and_Exp3_concat_data$isExp1)
+a=glmer(accuracy~is_cue_c*trial_type_c*isExp1_c+(is_cue_c|subjCode)+(1|color_c),data=Exp1_and_Exp3_concat_data,family=binomial)
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(a)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+a %>% confint(method="Wald") %>% kable()
+```
+
+## Reaction time analysis
+#### Model building
+```{r}
+La=lmer(latency~1+(1|subjCode),data=dataVisCueExact,REML=FALSE)
+Lb=lmer(latency~is_cue_c+(is_cue_c|subjCode),data=dataVisCueExact,REML=FALSE)
+Lc=lmer(latency~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataVisCueExact,REML=FALSE)
+Ld=lmer(latency~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataVisCueExact,REML=FALSE)
+anova(La,Lb,Lc,Ld) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(Ld)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+Ld %>% confint(method="Wald") %>% kable()
+```
+
+
+# Experiment 4: Visual cueing with prototypes
+## Descriptives
+```{r}
+dataVisCuev1 <- read.table("/Users/lewisforder/Dropbox/Research/LupyanLab/ResearchProjects/LCD-BEH-colorLangDiscrim/WriteUp/Files_for_OSF/Exp4_visual_cueing_with_prototypes.txt", sep="\t", header = TRUE)
+names(dataVisCuev1)[names(dataVisCuev1) == 'stim_pair_0focal1trans2bound'] <- 'trial_type' # 0=focal, 1=transition, 2=boundary 
+names(dataVisCuev1)[names(dataVisCuev1) == 'cue1_vs_noise0'] <- 'cue' # 0=focal, 1=transition, 2=boundary
+
+#toss low-performing subjects
+dataVisCuev1_agg = dataVisCuev1 %>% group_by(subjCode) %>% summarize(accuracy=mean(accuracy),RT=median(RT),numTrials=n()) %>% transform(normedAcc=scale(accuracy))
+lowAccSubjs_visCuev1 = dataVisCuev1_agg %>% filter(accuracy < 0.5)
+dataVisCuev1 = dataVisCuev1 %>% filter(!subjCode %in% lowAccSubjs_visCuev1$subjCode) #remove these subjects
+
+#fix up the latency column
+dataVisCuev1 = dataVisCuev1 %>% transform(latency = RT*accuracy*1000) %>% transform(latency=ifelse((accuracy=0 | latency<200 | latency>4000),NA,latency))
+
+#split condition code into more informative columns. This is extra work due to inconvenient condition coding...
+dataVisCuev1 = dataVisCuev1 %>% separate(condition_Code,c("condition_num2", "conditionSuffix"), sep='\\.') %>% separate(conditionSuffix,c("color", "boundary"),sep="2")
+dataVisCuev1$color = as.factor(dataVisCuev1$color)
+dataVisCuev1$boundary = as.factor(dataVisCuev1$boundary)
+
+#create column to denote basic boundaries (Red-Orange / Yellow-Orange / Red-Blue / Blue-Purple)
+# vs. non-basic boundaries (Yellow-Lime / Green-Lime / Green-Teal / Blue-Teal)
+dataVisCuev1$isBasic <- ifelse(dataVisCuev1$boundary %in% c("RYboundary", "BRboundary"), 1, 0)
+
+#center variables
+dataVisCuev1$is_cue_c = myCenter(dataVisCuev1$cue)
+dataVisCuev1$trial_type_c = myCenter(dataVisCuev1$trial_type)
+dataVisCuev1$color_c = myCenter(dataVisCuev1$color)
+dataVisCuev1$isBasic_c = myCenter(dataVisCuev1$isBasic)
+```
+
+#### Cue vs. no cue
+```{r}
+dataVisCuev1 %>% group_by(cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+#### Cue vs. no cue x trial-type
+```{r}
+dataVisCuev1 %>% group_by(trial_type,cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+## Accuracy analysis
+### Model building
+```{r}
+a=glmer(accuracy~1+(1|subjCode),data=dataVisCuev1,family=binomial)
+b=glmer(accuracy~is_cue_c+(is_cue_c|subjCode),data=dataVisCuev1,family=binomial)
+c=glmer(accuracy~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataVisCuev1,family=binomial)
+d=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataVisCuev1,family=binomial)
+e=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataVisCuev1,family=binomial)
+anova(a,b,c,d,e) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(e)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+e %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the cue x trial-type interaction
+##### Prototypes
+```{r}
+dataVisCuev1 %>% filter(trial_type ==0) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataVisCuev1 %>% filter(trial_type ==0) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+##### Transitionals
+```{r}
+dataVisCuev1 %>% filter(trial_type ==1) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataVisCuev1 %>% filter(trial_type ==1) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+##### Boundaries:
+```{r}
+dataVisCuev1 %>% filter(trial_type ==2) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% tidy()
+dataVisCuev1 %>% filter(trial_type ==2) %>% glmer(accuracy~is_cue_c+(is_cue_c|subjCode)+(1|color_c),data=.,family=binomial) %>% confint(method="Wald") %>% kable()
+```
+
+### Model building - Prototype cues (Experiment 4) vs. informative verbal cues (Experiment 1)
+```{r}
+dataUnblocked$isExp1 <- as.numeric(1)
+dataVisCuev1$isExp1 <- as.numeric(0)
+Unblocked_and_proto_visual_concat_data <- rbind(dataUnblocked, dataVisCuev1)
+Unblocked_and_proto_visual_concat_data$isExp1_c = myCenter(Unblocked_and_proto_visual_concat_data$isExp1)
+a=glmer(accuracy~1+(1|subjCode),data=Unblocked_and_proto_visual_concat_data,family=binomial)
+b=glmer(accuracy~is_cue_c+(is_cue_c|subjCode),data=Unblocked_and_proto_visual_concat_data,family=binomial)
+c=glmer(accuracy~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=Unblocked_and_proto_visual_concat_data,family=binomial)
+d=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=Unblocked_and_proto_visual_concat_data,family=binomial)
+e=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=Unblocked_and_proto_visual_concat_data,family=binomial)
+f=glmer(accuracy~is_cue_c*trial_type_c*isExp1_c+(is_cue_c|subjCode)+(1|color_c),data=Unblocked_and_proto_visual_concat_data,family=binomial)
+anova(a,b,c,d,e,f) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(f)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+f %>% confint(method="Wald") %>% kable()
+```
+
+### Model building - Prototype cues (Experiment 4) vs. exact visual cues (Experiment 3)
+```{r}
+dataVisCuev1$isExp3 <- as.numeric(1)
+dataVisCueExact$isExp1 <- as.numeric(0)
+dataVisCueExact$isExp3 <- as.numeric(0)
+Proto_and_exact_visual_concat_data <- rbind(dataVisCuev1, dataVisCueExact)
+Proto_and_exact_visual_concat_data$isExp3_c = myCenter(Proto_and_exact_visual_concat_data$isExp3)
+a=glmer(accuracy~is_cue_c*trial_type_c*isExp3_c+(is_cue_c|subjCode)+(1|color_c),data=Proto_and_exact_visual_concat_data,family=binomial)
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(a)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+a %>% confint(method="Wald") %>% kable()
+```
+
+## Reaction time analysis
+#### Model building
+```{r}
+La=lmer(latency~1+(1|subjCode),data=dataVisCuev1,REML=FALSE)
+Lb=lmer(latency~is_cue_c+(is_cue_c|subjCode),data=dataVisCuev1,REML=FALSE)
+Lc=lmer(latency~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataVisCuev1,REML=FALSE)
+Ld=lmer(latency~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataVisCuev1,REML=FALSE)
+anova(La,Lb,Lc,Ld) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(Ld)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+Ld %>% confint(method="Wald") %>% kable()
+```
+
+
+# Experiment 5: Letter strings
+## Descriptives
+```{r}
+dataFromLetters <- read.table("/Users/lewisforder/Dropbox/Research/LupyanLab/ResearchProjects/LCD-BEH-colorLangDiscrim/WriteUp/Files_for_OSF/Exp5_letter_strings.txt", sep="\t", header = TRUE)
+names(dataFromLetters)[names(dataFromLetters) == 'cue1_vs_noise0'] <- 'cue' # 0=focal, 1=transition, 2=boundary
+names(dataFromLetters)[names(dataFromLetters) == 'stim_pair_0focal1trans2bound'] <- 'trial_type' # 0=focal, 1=transition, 2=boundary 
+#get averages
+dataFromLetters_agg = dataFromLetters %>% group_by(subjCode) %>% summarize(accuracy=mean(similarity),RT=median(RT),numTrials=n()) %>% transform(normedAcc=scale(accuracy))
+
+# exclude participants (specify reason)
+dataFromLetters = dataFromLetters %>% filter(!subjCode == 'Exp8_S001') #subject didn't follow instructions
+
+#fix up the latency column
+dataFromLetters = dataFromLetters %>% transform(latency = RT*similarity*1000) %>% transform(latency=ifelse((similarity=0 | latency<50 | latency>4000),NA,latency))
+
+#split condition code into more informative columns. This is extra work due to inconvenient condition coding...
+dataFromLetters = dataFromLetters %>% separate(condition_Code,c("condition_num2", "conditionSuffix"), sep='\\.') %>% separate(conditionSuffix,c("color", "boundary"),sep="2")
+dataFromLetters$color = as.factor(dataFromLetters$color)
+dataFromLetters$boundary = as.factor(dataFromLetters$boundary)
+
+#center variables
+dataFromLetters$is_cue_c = myCenter(dataFromLetters$cue)
+dataFromLetters$trial_type_c = myCenter(dataFromLetters$trial_type)
+dataFromLetters$color_c = myCenter(dataFromLetters$color)
+
+#add column for absolute accuracty (that specifies 1.0 if similarity = 1.0 or 0.0 if similarity < 1.0)
+dataFromLetters$binary_accuracy <- ifelse(dataFromLetters$similarity <1.0, 0.0, 1.0)
+```
+
+### Absolute accuracy 
+```{r}
+dataFromLetters %>% group_by(cue) %>% summarize(Accuracy=mean(binary_accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+### Continuous accuracy
+```{r}
+dataFromLetters %>% group_by(cue) %>% summarize(Accuracy=mean(similarity),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+### Absolute Accuracy analysis
+#### Model building
+```{r}
+a=glmer(binary_accuracy~1+(1|subjCode),data=dataFromLetters,family=binomial)
+b=glmer(binary_accuracy~is_cue_c+(is_cue_c|subjCode),data=dataFromLetters,family=binomial)
+c=glmer(binary_accuracy~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataFromLetters,family=binomial)
+d=glmer(binary_accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataFromLetters,family=binomial)
+e=glmer(binary_accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataFromLetters,family=binomial)
+anova(a,b,c,d,e) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(e)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+e %>% confint(method="Wald")
+```
+
+### Continuous Accuracy analysis
+#### Model building
+```{r}
+a=lmer(similarity~1+(1|subjCode),data=dataFromLetters,REML=FALSE)
+b=lmer(similarity~is_cue_c+(is_cue_c|subjCode),data=dataFromLetters,REML=FALSE)
+c=lmer(similarity~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataFromLetters,REML=FALSE)
+d=lmer(similarity~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataFromLetters,REML=FALSE)
+e=lmer(similarity~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataFromLetters,REML=FALSE)
+anova(a,b,c,d,e) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(e)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+e %>% confint(method="Wald")
+```
+
+#### Analysis of the effect of trial-type on label trials
+```{r}
+dataFromLetters_cue <- subset(dataFromLetters, cue == 1)
+A=lmer(similarity~trial_type_c+(1|subjCode)+(1|color_c),data=dataFromLetters_cue,REML=FALSE)
+tidy(A)
+A %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of trial-type on noise trials
+```{r}
+dataFromLetters_cue <- subset(dataFromLetters, cue == 0)
+B=lmer(similarity~trial_type_c+(1|subjCode)+(1|color_c),data=dataFromLetters_cue,REML=FALSE)
+tidy(B)
+B %>% confint(method="Wald") %>% kable()
+```
+
+## Reaction time analysis
+#### Model building
+```{r}
+La=lmer(latency~1+(1|subjCode),data=dataFromLetters,REML=FALSE)
+Lb=lmer(latency~is_cue_c+(is_cue_c|subjCode),data=dataFromLetters,REML=FALSE)
+Lc=lmer(latency~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=dataFromLetters,REML=FALSE)
+Ld=lmer(latency~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=dataFromLetters,REML=FALSE)
+Le=lmer(latency~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=dataFromLetters,REML=FALSE)
+anova(La,Lb,Lc,Ld,Le) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(Le)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+Le %>% confint(method="Wald") %>% kable()
+```
+
+# Experiment 6: Verbal cues are more effective for personal prototypes and boundaries
+## Descriptives
+```{r}
+data_average_colors <- read.table("/Users/lewisforder/Dropbox/Research/LupyanLab/ResearchProjects/LCD-BEH-colorLangDiscrim/WriteUp/Files_for_OSF/Exp6_informative_verbal_cues_average_colors.txt", sep="\t", header = TRUE)
+names(data_average_colors)[names(data_average_colors) == 'stim_pair_0focal1trans2bound'] <- 'trial_type' # 0=focal, 1=transition, 2=boundary 
+names(data_average_colors)[names(data_average_colors) == 'cue1_vs_noise0'] <- 'cue' # 0=focal, 1=transition, 2=boundary
+
+
+#toss low-performing subjects
+data_average_colors_agg = data_average_colors %>% group_by(subjCode) %>% summarize(accuracy=mean(accuracy),RT=median(RT),numTrials=n()) %>% transform(normedAcc=scale(accuracy))
+lowAccSubjs_unblocked = data_average_colors_agg %>% filter(accuracy<.50)
+data_average_colors = data_average_colors %>% filter(!subjCode %in% lowAccSubjs_unblocked$subjCode) #remove these subjects
+
+#fix up the latency column
+data_average_colors = data_average_colors %>% transform(latency = RT*accuracy*1000) %>% transform(latency=ifelse((accuracy=0 | latency<200 | latency>4000),NA,latency))
+
+#split condition code into more informative columns. This is extra work due to inconvenient condition coding...
+data_average_colors = data_average_colors %>% separate(condition_Code,c("condition_num2", "conditionSuffix"), sep='\\.') %>% separate(conditionSuffix,c("color", "boundary"),sep="2")
+data_average_colors$color = as.factor(data_average_colors$color)
+data_average_colors$boundary = as.factor(data_average_colors$boundary)
+
+#create column to denote basic boundaries (Red-Orange / Yellow-Orange / Red-Blue / Blue-Purple)
+# vs. non-basic boundaries (Yellow-Lime / Green-Lime / Green-Teal / Blue-Teal)
+data_average_colors$isBasic <- ifelse(data_average_colors$boundary %in% c("RYboundary", "BRboundary"), 1, 0)
+
+#center variables
+data_average_colors$is_cue_c = myCenter(data_average_colors$cue)
+data_average_colors$trial_type_c = myCenter(data_average_colors$trial_type)
+data_average_colors$color_c = myCenter(data_average_colors$color)
+data_average_colors$isBasic_c = myCenter(data_average_colors$isBasic)
+data_average_colors$EucDist_Tar2Proto_c = myCenter(data_average_colors$EucDist_Tar2Proto) #= euclidean distance of the on-screen target to subject's prototype
+```
+
+#### Cue vs. no cue
+```{r}
+data_average_colors %>% group_by(cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+#### Cue vs. no cue x trial-type
+```{r}
+data_average_colors %>% group_by(trial_type,cue) %>% summarize(Accuracy=mean(accuracy),latency=mean(latency,na.rm=TRUE)) %>% data.frame %>% kable()
+```
+
+## Accuracy analysis
+#### Model building
+```{r}
+a=glmer(accuracy~1+(1|subjCode),data=data_average_colors,family=binomial)
+b=glmer(accuracy~is_cue_c+(is_cue_c|subjCode),data=data_average_colors,family=binomial)
+c=glmer(accuracy~is_cue_c+trial_type_c+(is_cue_c|subjCode),data=data_average_colors,family=binomial)
+d=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode),data=data_average_colors,family=binomial)
+e=glmer(accuracy~is_cue_c*trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=data_average_colors,family=binomial)
+f=glmer(accuracy~is_cue_c*trial_type_c+I(EucDist_Tar2Proto_c/100)+I(EucDist_Tar2Proto_c/100):trial_type_c+(is_cue_c|subjCode)+(1|color_c),data=data_average_colors,family=binomial)
+
+# EucDist_Tar2Proto_c and trial_type_c are highly colinear, therefore best model is:
+g=glmer(accuracy~is_cue_c*I(EucDist_Tar2Proto_c/100)+(is_cue_c|subjCode)+(1|color_c),data=data_average_colors,family=binomial)
+anova(a,b,c,d,e,g) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(g)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+g %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of Euclidean color distance on label trials
+```{r}
+data_labels_avCols <- filter(data_average_colors, cue ==1)
+A = glmer(accuracy~I(EucDist_Tar2Proto_c/100)+(1|subjCode)+(1|color_c),data=data_labels_avCols,family=binomial)
+tidy(A)
+A %>% confint(method="Wald") %>% kable()
+```
+
+#### Analysis of the effect of Euclidean color distance on noise trials
+```{r}
+data_labels_avCols <- filter(data_average_colors, cue ==0)
+B = glmer(accuracy~I(EucDist_Tar2Proto_c/100)+(1|subjCode)+(1|color_c),data=data_labels_avCols,family=binomial)
+tidy(B)
+B %>% confint(method="Wald") %>% kable()
+```
+
+## Reaction time analysis
+#### Model building
+```{r}
+La=lmer(latency~1+(1|subjCode),data=data_average_colors,REML=FALSE)
+Lb=lmer(latency~is_cue_c+(is_cue_c|subjCode),data=data_average_colors,REML=FALSE)
+Lc=lmer(latency~is_cue_c+I(EucDist_Tar2Proto_c/100)+(is_cue_c|subjCode),data=data_average_colors,REML=FALSE)
+Ld=lmer(latency~is_cue_c*I(EucDist_Tar2Proto_c/100)+(is_cue_c|subjCode),data=data_average_colors,REML=FALSE)
+anova(La,Lb,Lc,Ld) %>% kable()
+```
+
+#### Final model ouput statistics
+```{r}
+tidy(Ld)
+```
+
+#### Final model ouput 95% confidence intervals
+```{r}
+Ld %>% confint(method="Wald") %>% kable()
+```
+
+### Model building - Same colors (Experiment 6) vs. Personalized colors (Experiment 1)
+```{r}
+#remove unecessary columns for rbinding
+drops <- c("EucDist_Tar2Proto", "EucDist_Tar2Proto_c")
+data_average_colors=data_average_colors[ , !(names(data_average_colors) %in% drops)]
+dataUnblocked$isExp1 <- as.numeric(1)
+data_average_colors$isExp1 <- as.numeric(0)
+Average_and_personalized_concat_data <- rbind(dataUnblocked, data_average_colors)
+Average_and_personalized_concat_data$isExp1_c = myCenter(Average_and_personalized_concat_data$isExp1)
+a=glmer(accuracy~is_cue_c*trial_type_c*isExp1_c+(is_cue_c|subjCode)+(1|color_c),data=Average_and_personalized_concat_data,family=binomial)
+tidy(a)
+a %>% confint(method="Wald") %>% kable()
+```
